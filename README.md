@@ -1,96 +1,116 @@
-# ETL Project Using SQL and phpMyAdmin
+# Enterprise Analytical Data Warehouse
 
-This project was developed as part of a Data Warehousing course to demonstrate the Extract, Transform, and Load (ETL) process using SQL within phpMyAdmin. It serves as an educational example of setting up databases, data staging, and a data warehouse, as well as performing ETL operations, aggregating data, and managing refresh procedures.
+An analytics-ready data warehouse built end to end in SQL on MySQL. Separate operational systems (product sales and equipment rentals, each with its own tables and pricing rules) are extracted into a staging layer, conformed into a shared star schema, and kept current with incremental, late-arrival-safe refreshes. History is preserved with Slowly Changing Dimensions (Type 2), and pre-built aggregate and snapshot tables serve reporting.
 
-## Technologies Used
+**Stack:** SQL · MySQL · stored procedures · phpMyAdmin
 
-- **MySQL**: Relational database management system for data storage.
-- **phpMyAdmin**: Web-based interface for managing MySQL databases.
-- **SQL**: Language used for performing data extraction, transformation, and loading tasks.
+**Dataset:** a retail sales-and-rentals data model (sample data).
 
-## Educational Purpose
+## What it demonstrates
 
-This project is intended solely for educational purposes to showcase the application of ETL processes within a data warehousing context. It was developed as part of academic coursework and is not intended for commercial use or distribution.
+| Capability | How it is implemented |
+|---|---|
+| Multi-source integration | Sales and rental transaction systems (different tables, different price logic: unit price, daily rate, weekly rate) are merged into one conformed fact table |
+| Layered architecture | Operational source → staging database (`DS`) → warehouse database (`DW`) |
+| Dimensional modeling | Star schema: one revenue-and-units fact table shared by both business lines, with conformed Product, Customer, Store and Calendar dimensions |
+| ETL | Initial load script, then stored procedures that extract from the source, stage, transform, and load into the warehouse |
+| Incremental loading | Daily fact refresh loads only transactions newer than the last extraction timestamp |
+| Late-arriving facts | A separate refresh finds transactions missing from the warehouse and loads them, so delayed records are not lost |
+| Slowly Changing Dimensions (Type 2) | Product and Customer rows keep full history with valid-from / valid-until dates and a current-row flag, instead of being overwritten |
+| Analytics-ready outputs | Product-category revenue aggregate and a daily store snapshot table, ready for BI tools and ad hoc SQL |
+| Orchestration | One `DailyRefresh` procedure runs every dimension and fact refresh in the correct order |
 
-## File Descriptions
+## Architecture
 
-### 1. **ZAGIMORE_DB_Creation.sql**
-   Initializes the primary database, setting up the environment for all data operations.
+```mermaid
+flowchart LR
+    SALES[(Sales<br/>transactions)] -->|extract| DS[(Staging<br/>DS)]
+    RENT[(Rental<br/>transactions)] -->|extract| DS
+    DS -->|conform + load| DW[(Data warehouse<br/>DW star schema)]
+    DW --> AGG[Aggregates and<br/>daily snapshots]
+    DR[[DailyRefresh]] -.->|runs| DS
+    DR -.->|runs| DW
+```
 
-### 2. **populateCalendarProcedure.sql**
-   Contains the procedure to populate the calendar dimension table created during the database initialization.
+`DailyRefresh` runs, in order: customer, product and store dimension refreshes → Type 2 refreshes for customer and product → regular daily fact refresh → late-arriving fact refresh.
 
-### 3. **ZAGIMORE_DS_Creation.sql**
-   Establishes the **Data Staging** area by preparing tables and structures to hold raw data extracted from various sources before transformation.
+## Star schema
 
-### 4. **ZAGIMORE_DW_Creation.sql**
-   Sets up the **Data Warehouse** by creating the target database structures where transformed data will be loaded for analytical purposes.
+```mermaid
+erDiagram
+    RevenueAndUnits }o--|| CalendarDimension : "CalendarKey"
+    RevenueAndUnits }o--|| ProductDimension : "ProductKey"
+    RevenueAndUnits }o--|| StoreDimension : "StoreKey"
+    RevenueAndUnits }o--|| CustomerDimension : "CustomerKey"
+    RevenueAndUnits {
+        int RevenueGenerated
+        int UnitSold
+        varchar RevenueType
+        varchar TransactionID
+    }
+    ProductDimension {
+        int ProductKey PK
+        char ProductID
+        varchar ProductName
+        varchar VendorName
+        varchar CategoryName
+        date dvf "valid from"
+        date dvu "valid until"
+        char CurrentStatus
+    }
+    CustomerDimension {
+        int CustomerKey PK
+        char CustomerID
+        varchar CustomerName
+        char CustomerZIP
+    }
+    StoreDimension {
+        int StoreKey PK
+        varchar StoreID
+        char StoreZIP
+        varchar RegionName
+    }
+    CalendarDimension {
+        int CalendarKey PK
+        date FullDate
+        date CalendarMonth
+        date CalendarYear
+    }
+```
 
-### 5. **ETL.sql**
-   Executes the initial Extract, Transform, and Load (ETL) operations by processing raw data from the staging area, transforming it, and loading it into the data warehouse for analysis.
+Revenue is recorded by type (sales, daily rental, weekly rental), so one fact table serves both parts of the business.
 
-### 6. **Aggregates_Snapshots.sql**
-   Manages the creation of aggregated summaries and snapshots of data, which are useful for reporting and historical analysis.
+## How the data moves
 
-### 7. **Refreshes.sql**
-   Contains stored procedures that handle data refreshes, updating the data warehouse with the latest information to ensure data consistency.
+1. **Extract:** new sales and rental transactions are pulled from their separate source tables and standardized into one intermediate table (revenue type: sale, daily rental, weekly rental).
+2. **Stage:** keys are resolved against the dimensions and the rows are inserted into the staging fact table, flagged as not yet loaded.
+3. **Load:** flagged rows are inserted into the warehouse fact table and then marked as loaded.
+4. **Handle changes:** when a product or customer attribute changes in the source, the Type 2 procedures close the old dimension row and insert a new current row, so history stays accurate.
+5. **Catch late arrivals:** transactions that exist in the source but not in staging are loaded by the late-arriving fact refresh.
 
-### 8. **Type2Changes_Refresh.sql**
-   Implements Type 2 Slowly Changing Dimension (SCD) logic, adding historical tracking capabilities.
+## Scripts
 
-### 9. **Procedures.sql**
-   Defines various stored procedures for refreshing dimension and fact tables.
- 
+Run them in this order:
 
+| # | Script | Purpose |
+|---|---|---|
+| 1 | `ZAGIMORE_DB_Creation.sql` | Creates the operational source database |
+| 2 | `populateCalendarProcedure.sql` | Procedure that fills the calendar dimension |
+| 3 | `ZAGIMORE_DS_Creation.sql` | Creates the staging area |
+| 4 | `ZAGIMORE_DW_Creation.sql` | Creates the warehouse tables (star schema) |
+| 5 | `ETL.sql` | Initial extract, transform and load |
+| 6 | `Aggregates_Snapshots.sql` | Aggregate and snapshot tables |
+| 7 | `Refreshes.sql` | Incremental dimension and fact refresh procedures |
+| 8 | `Type2Changes_Refresh.sql` | Type 2 history for Product and Customer |
+| 9 | `Procedures.sql` | Consolidated refresh procedures, including `DailyRefresh` |
 
-## Getting Started
+## Running it
 
-### Prerequisites
-
-1. **phpMyAdmin**: Install phpMyAdmin to interact with MySQL databases through a web interface.
-2. **MySQL**: Install MySQL to set up and manage your databases.
-3. **SQL**: Basic knowledge of SQL queries is required for performing ETL tasks.
-
-### Installation
-
-1. Install MySQL and phpMyAdmin on your local machine or use a web-hosted version of phpMyAdmin.
-2. Clone or download the project repository to your local machine.
-3. Open phpMyAdmin and log in to your MySQL server.
-
-## Running the ETL Process
-
-1. **Create the Database and Calendar Dimension**: Run the `ZAGIMORE_DB_Creation.sql` script to create the database. This script initializes the database.
-
-2. **Populate the Calendar Dimension**: Execute the `populateCalendarProcedure.sql` script to populate the calendar dimension table with date attributes.
-
-3. **Create the Data Staging Area**: Run the `ZAGIMORE_DS_Creation.sql` script to set up the staging tables. These tables temporarily hold raw data extracted from various sources before transformation.
-
-4. **Create the Data Warehouse**: Run the `ZAGIMORE_DW_Creation.sql` script to establish the data warehouse structures. These structures are optimized for analytical queries and reporting.
-
-5. **Perform the Initial ETL**: Execute the `ETL.sql` script to process and load data from the staging area into the data warehouse. This step performs the initial extraction, transformation, and loading of data.
-
-6. **Create Aggregates and Snapshots**: Run the `Aggregates_Snapshots.sql` script to generate necessary aggregates and snapshots. These are useful for reporting and historical analysis.
-
-7. **Set Up Refresh Procedures**: Execute the `Refreshes.sql` script to establish procedures for keeping the data up-to-date. These procedures ensure that the data warehouse reflects the latest information.
-
-8. **Implement Type 2 Slowly Changing Dimension Logic**: Run the `Type2Changes_Refresh.sql` script to apply Type 2 SCD logic to the **Product** and **Customer** dimensions, enabling historical tracking of changes.
-
-9. **Execute All Procedures**: Execute the `Procedures.sql` script to define and execute all stored procedures for refreshing dimensions and fact tables. This step ensures that the data warehouse is fully updated.
-
-
-
-## Acknowledgments
-
-This project was developed as part of the Data Warehousing course at Clarkson University. Special thanks to Professor Boris Jukic and [@Reddy01naveen](https://github.com/Reddy01naveen) (Naveen Ramachandra Reddy) for guidance and support throughout the course.
-
-## License
-
-This project is intended for educational purposes only. All content is provided "as is," without warranty of any kind. For licensing inquiries, please contact Vaibhav Alluri.
+1. Install MySQL and phpMyAdmin (or use a hosted phpMyAdmin).
+2. Clone the repository and open phpMyAdmin.
+3. Run the scripts above in order. The database names in the scripts are prefixed with the original account name; change the prefix to match your environment.
+4. After the initial load, call `DailyRefresh()` to run an incremental refresh.
 
 ## Contact
 
-For more information, please contact:
-
-- **Name**: Vaibhav Alluri
-- **Email**: alluriv@clarkson.edu
-
+Vaibhav Alluri · vaibhav.sai5076@gmail.com · [LinkedIn](https://linkedin.com/in/vaibhavalluri) · [alluriv.dev](https://alluriv.dev)
