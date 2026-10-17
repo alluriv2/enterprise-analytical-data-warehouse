@@ -36,47 +36,7 @@ flowchart LR
 
 ## Star schema
 
-```mermaid
-erDiagram
-    RevenueAndUnits }o--|| CalendarDimension : "CalendarKey"
-    RevenueAndUnits }o--|| ProductDimension : "ProductKey"
-    RevenueAndUnits }o--|| StoreDimension : "StoreKey"
-    RevenueAndUnits }o--|| CustomerDimension : "CustomerKey"
-    RevenueAndUnits {
-        int RevenueGenerated
-        int UnitSold
-        varchar RevenueType
-        varchar TransactionID
-    }
-    ProductDimension {
-        int ProductKey PK
-        char ProductID
-        varchar ProductName
-        varchar VendorName
-        varchar CategoryName
-        date dvf "valid from"
-        date dvu "valid until"
-        char CurrentStatus
-    }
-    CustomerDimension {
-        int CustomerKey PK
-        char CustomerID
-        varchar CustomerName
-        char CustomerZIP
-    }
-    StoreDimension {
-        int StoreKey PK
-        varchar StoreID
-        char StoreZIP
-        varchar RegionName
-    }
-    CalendarDimension {
-        int CalendarKey PK
-        date FullDate
-        date CalendarMonth
-        date CalendarYear
-    }
-```
+![Star schema: the RevenueAndUnits fact table in the center, with Calendar, Product, Customer and Store dimensions around it](docs/star-schema.svg)
 
 Revenue is recorded by type (sales, daily rental, weekly rental), so one fact table serves both parts of the business.
 
